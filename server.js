@@ -1,107 +1,81 @@
-// server.js
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const path = require('path');
+const google = require('googleapis');
+const { googleAuth } = require('google-auth-library');
+const { googleSheets } = require('./googleSheets');
+const mpesaPayment = require('./mpesaPayment');
+require('dotenv').config();
 
-require("dotenv").config();
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const { google } = require("googleapis");
-const axios = require("axios");
-
+// Initialize Express app
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 5000;
+
+// Middleware for CORS
+app.use(cors({
+  origin: 'https://peron-tips-frontend.vercel.app', // Replace with your frontend URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// Middleware for parsing JSON and form data
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 5000;
-
-// Google Sheets Setup
-const auth = new google.auth.GoogleAuth({
-  keyFile: "service-account.json",
-  scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-});
-
-const SHEET_ID = process.env.SHEET_ID;
-const sheets = google.sheets({ version: "v4", auth });
-
-// Mpesa Access Token (for Live Environment)
-let mpesaToken = null;
-
-const getMpesaToken = async () => {
-  const { MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET } = process.env;
-  const authBuffer = Buffer.from(`${MPESA_CONSUMER_KEY}:${MPESA_CONSUMER_SECRET}`).toString("base64");
-
+// Google Sheets API (Example to get data)
+app.get('/questions', async (req, res) => {
   try {
-    const res = await axios.get("https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials", {
-      headers: {
-        Authorization: `Basic ${authBuffer}`,
-      },
+    const auth = new google.auth.GoogleAuth({
+      keyFile: 'service-account.json',
+      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
-    mpesaToken = res.data.access_token;
-  } catch (error) {
-    console.error("Error getting Mpesa token:", error);
-  }
-};
 
-// Simulated Reward Payment (replace with actual Mpesa B2C or STK push logic)
-const rewardUser = async (phone, amount) => {
-  await getMpesaToken();
-  // Placeholder for actual reward logic using Mpesa
-  console.log(`Rewarding ${phone} with Ksh ${amount}`);
-  return true; // Simulate successful transaction
-};
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SPREADSHEET_ID; // Use environment variable for spreadsheet ID
 
-// Get Questions From Google Sheet
-app.get("/api/questions/:section", async (req, res) => {
-  const section = req.params.section.toUpperCase();
-  try {
+    const range = 'A1:J10'; // Range for sections A to J
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${section}!A2:B11`,
+      spreadsheetId,
+      range,
     });
-    const rows = response.data.values;
-    const questions = rows.map(([question], index) => ({
-      id: index + 1,
-      question,
-    }));
-    const answers = rows.map(([_, answer]) => answer);
-    res.json({ questions, answers });
+
+    res.json(response.data.values); // Send questions as JSON
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch questions." });
+    console.error('Error fetching data from Google Sheets:', error);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-// Handle Quiz Submission
-app.post("/api/submit", async (req, res) => {
-  const { section, userAnswers, phone } = req.body;
+// Example MPesa payment route
+app.post('/mpesa/payment', async (req, res) => {
+  const { phoneNumber, amount } = req.body;
 
+  // Call Mpesa payment integration here
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${section.toUpperCase()}!B2:B11`,
-    });
-    const correctAnswers = response.data.values.map((row) => row[0]);
+    const paymentResponse = await mpesaPayment.initiatePayment(phoneNumber, amount);
 
-    let score = 0;
-    for (let i = 0; i < correctAnswers.length; i++) {
-      if (
-        userAnswers[i] &&
-        userAnswers[i].toString().trim().toLowerCase() === correctAnswers[i].trim().toLowerCase()
-      ) {
-        score++;
-      }
-    }
-
-    if (score >= 8) {
-      // If user wins, reward them with Ksh 200
-      await rewardUser(phone, 200);
-      return res.json({ success: true, score, message: "Congratulations! You won Ksh 200." });
+    if (paymentResponse.status === 'success') {
+      // Successful payment logic
+      res.json({ message: 'Payment successful', paymentDetails: paymentResponse });
     } else {
-      return res.json({ success: false, score, message: "You did not reach the target. Try again." });
+      res.status(400).json({ message: 'Payment failed', error: paymentResponse });
     }
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to evaluate answers." });
+    console.error('Payment error:', error);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Serve frontend static files (for production)
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// Fallback route to serve the frontend if no other route matches
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
