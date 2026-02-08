@@ -12,9 +12,23 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware for CORS
+// ✅ UPDATED CORS: allow multiple frontends
+const allowedOrigins = [
+  'https://peron-tips-frontend.vercel.app',
+  'https://the-ancient-cross-stv.vercel.app'
+];
+
 app.use(cors({
-  origin: 'https://peron-tips-frontend.vercel.app', // Replace with your frontend URL
+  origin: function (origin, callback) {
+    // allow requests with no origin (like mobile apps, curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -32,15 +46,15 @@ app.get('/questions', async (req, res) => {
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
-    const spreadsheetId = process.env.SPREADSHEET_ID; // Use environment variable for spreadsheet ID
+    const spreadsheetId = process.env.SPREADSHEET_ID;
 
-    const range = 'A1:J10'; // Range for sections A to J
+    const range = 'A1:J10';
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range,
     });
 
-    res.json(response.data.values); // Send questions as JSON
+    res.json(response.data.values);
   } catch (error) {
     console.error('Error fetching data from Google Sheets:', error);
     res.status(500).send('Internal Server Error');
@@ -51,12 +65,10 @@ app.get('/questions', async (req, res) => {
 app.post('/mpesa/payment', async (req, res) => {
   const { phoneNumber, amount } = req.body;
 
-  // Call Mpesa payment integration here
   try {
     const paymentResponse = await mpesaPayment.initiatePayment(phoneNumber, amount);
 
     if (paymentResponse.status === 'success') {
-      // Successful payment logic
       res.json({ message: 'Payment successful', paymentDetails: paymentResponse });
     } else {
       res.status(400).json({ message: 'Payment failed', error: paymentResponse });
@@ -70,7 +82,7 @@ app.post('/mpesa/payment', async (req, res) => {
 // Serve frontend static files (for production)
 app.use(express.static(path.join(__dirname, 'frontend')));
 
-// Fallback route to serve the frontend if no other route matches
+// Fallback route to serve the frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
